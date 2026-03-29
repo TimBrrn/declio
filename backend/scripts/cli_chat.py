@@ -37,9 +37,9 @@ from backend.src.infrastructure.persistence.models import ApiUsageModel, Cabinet
 from backend.src.domain.services.call_processor import CallProcessor
 from backend.src.domain.value_objects.token_usage import (
     DEEPGRAM_PRICE_PER_MINUTE,
-    ELEVENLABS_PRICE_PER_1K_CHARS,
     USD_TO_EUR,
 )
+from backend.src.infrastructure.config.pricing import get_tts_price_per_1k_chars
 
 from langchain_core.messages import HumanMessage
 
@@ -320,7 +320,7 @@ async def main() -> None:
     total_prompt = sum(t.get("prompt_tokens", 0) for t in token_turns)
     total_completion = sum(t.get("completion_tokens", 0) for t in token_turns)
     stt_cost_usd = (stt_seconds_total / 60) * DEEPGRAM_PRICE_PER_MINUTE
-    tts_cost_usd = (tts_chars_total / 1000) * ELEVENLABS_PRICE_PER_1K_CHARS
+    tts_cost_usd = (tts_chars_total / 1000) * get_tts_price_per_1k_chars()
     total_cost_usd = llm_cost_usd + stt_cost_usd + tts_cost_usd
     total_cost_eur = total_cost_usd * USD_TO_EUR
 

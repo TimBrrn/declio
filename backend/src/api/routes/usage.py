@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, func, select
 
 from backend.src.api.dependencies import get_db_session
+from backend.src.api.middleware.auth import get_current_user
 from backend.src.domain.value_objects.token_usage import USD_TO_EUR
 from backend.src.infrastructure.persistence.models import CallRecordModel
 
@@ -15,6 +16,7 @@ def usage_summary(
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     """Aggregated cost summary across all calls."""
     statement = select(CallRecordModel)

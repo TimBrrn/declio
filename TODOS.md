@@ -52,6 +52,26 @@
 - **Priority:** P3
 - **Blocked by:** CI fonctionnel
 
+### Purge automatique des transcriptions (RGPD)
+- **What:** Ajouter un job de purge qui supprime `transcript_json` des CallRecordModel apres N jours (configurable, defaut 30j).
+- **Why:** Le memo RGPD stipule que les transcriptions doivent etre "supprimees immediatement apres traitement". Pour le PoC debug, on les garde, mais avant commercialisation c'est bloquant.
+- **Pros:** Conformite RGPD, reduit la taille de la DB, rassure les kines.
+- **Cons:** Perte de debug post-facto, necessite un mecanisme de retention configurable.
+- **Context:** Garde pour le PoC avec 3 cabinets pilotes (DPA signe). Bloquant avant premier client payant.
+- **Effort:** S (0.5 jour)
+- **Priority:** P1 (bloquant commercialisation, comme HDS)
+- **Blocked by:** Validation PoC reussie
+
+### Migrations Alembic
+- **What:** Ajouter Alembic pour gerer les migrations de schema DB au lieu de `metadata.create_all()`.
+- **Why:** Chaque changement de modele (ajout de colonne, FK) necessite actuellement de supprimer et re-creer la DB. Inacceptable avec des vraies donnees.
+- **Pros:** Migrations incrementales, rollback possible, historique des changements.
+- **Cons:** Setup initial (~1h), fichier de config, dossier migrations/.
+- **Context:** Pour le PoC avec SQLite, `metadata.create_all()` + seed script suffit. Obligatoire des le passage PostgreSQL.
+- **Effort:** S (0.5 jour setup + 1h par migration)
+- **Priority:** P2
+- **Blocked by:** Migration PostgreSQL
+
 ### Filtrage des appels par patient_name via l'API
 - **What:** Ajouter un query param `patient_name` a `GET /api/calls/` pour filtrer les appels par nom de patient.
 - **Why:** Le champ `patient_name` est maintenant un champ dedie dans `CallRecordModel`. Le kine peut chercher l'historique d'un patient specifique.

@@ -23,11 +23,11 @@ function StatusIndicator({ online }: { online: boolean }) {
   return (
     <div className="flex items-center gap-1.5">
       <span
-        className={`w-2 h-2 rounded-full ${
-          online ? "bg-primary-500 animate-pulse" : "bg-rose-500"
+        className={`w-1.5 h-1.5 rounded-full ${
+          online ? "bg-primary-500" : "bg-stone-300"
         }`}
       />
-      <span className="text-xs text-stone-500">
+      <span className="text-xs text-stone-400">
         {online ? "En ligne" : "Hors ligne"}
       </span>
     </div>
@@ -51,7 +51,7 @@ function NavLink({
     <Link
       to={to}
       onClick={onClick}
-      className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-stone-600 hover:bg-stone-50 hover:text-stone-900 no-underline transition-colors [&.active]:bg-primary-50 [&.active]:text-primary-700"
+      className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-stone-500 hover:bg-stone-50 hover:text-stone-800 no-underline transition-colors [&.active]:bg-primary-50/60 [&.active]:text-primary-700"
       activeProps={{ className: "active" }}
     >
       {icon}
@@ -143,7 +143,8 @@ function RootLayout() {
   const navigate = useNavigate();
   const isLoginPage = location.pathname === "/login";
   const isHomePage = location.pathname === "/";
-  const isPublicPage = isLoginPage || isHomePage;
+  const isMapPage = location.pathname === "/map";
+  const isPublicPage = isLoginPage || isHomePage || isMapPage;
 
   useEffect(() => {
     if (!isPublicPage && !authLoading && !isAuthenticated) {
@@ -205,7 +206,7 @@ export function AuthenticatedShell() {
       {/* Sidebar */}
       <aside
         className={`
-          fixed inset-y-0 left-0 z-30 w-64 bg-white shadow-sm flex flex-col
+          fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-stone-200/60 flex flex-col
           transform transition-transform duration-200 ease-in-out
           lg:translate-x-0 lg:static lg:z-auto
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
@@ -300,7 +301,7 @@ export function AuthenticatedShell() {
           </div>
           {/* Status + version */}
           <div className="flex items-center justify-between">
-            <p className="text-xs text-stone-400">Declio PoC v0.1</p>
+            <p className="text-xs text-stone-300">Declio PoC v0.1</p>
             <StatusIndicator online={isOnline} />
           </div>
         </div>
@@ -309,7 +310,7 @@ export function AuthenticatedShell() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar mobile */}
-        <header className="h-16 flex items-center justify-between px-4 bg-white shadow-sm lg:hidden">
+        <header className="h-16 flex items-center justify-between px-4 bg-white border-b border-stone-200/60 lg:hidden">
           <div className="flex items-center">
             <button
               onClick={() => setSidebarOpen(true)}

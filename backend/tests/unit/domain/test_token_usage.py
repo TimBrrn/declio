@@ -45,7 +45,7 @@ class TestTokenUsage:
 
     def test_default_model(self):
         usage = TokenUsage()
-        assert usage.model == "gpt-4o"
+        assert usage.model == "mistral-small-latest"
 
 
 class TestPricingConstants:

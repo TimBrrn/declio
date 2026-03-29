@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from backend.src.api.dependencies import get_db_session
+from backend.src.api.middleware.auth import get_current_user
 from backend.src.infrastructure.persistence.models import AppointmentModel
 
 router = APIRouter(prefix="/api/appointments", tags=["appointments"])
@@ -35,6 +36,7 @@ def list_appointments(
     status: str | None = Query(default=None),
     cabinet_id: str | None = Query(default=None),
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     statement = select(AppointmentModel)
     if cabinet_id:
@@ -56,6 +58,7 @@ def list_appointments(
 def create_appointment(
     data: AppointmentCreate,
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     created = []
     weeks = max(1, min(data.repeat_weeks, 52))
@@ -82,6 +85,7 @@ def update_appointment(
     appointment_id: str,
     data: AppointmentUpdate,
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     appt = session.get(AppointmentModel, appointment_id)
     if not appt:
@@ -101,6 +105,7 @@ def update_appointment(
 def delete_appointment(
     appointment_id: str,
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     appt = session.get(AppointmentModel, appointment_id)
     if not appt:

@@ -29,12 +29,14 @@ def test_engine():
 def client(test_engine):
     from backend.src.api.main import app
     from backend.src.api.dependencies import get_db_session
+    from backend.src.api.middleware.auth import get_current_user
 
     def _override_session():
         with Session(test_engine) as session:
             yield session
 
     app.dependency_overrides[get_db_session] = _override_session
+    app.dependency_overrides[get_current_user] = lambda: {"authenticated": True}
     yield TestClient(app)
     app.dependency_overrides.clear()
 

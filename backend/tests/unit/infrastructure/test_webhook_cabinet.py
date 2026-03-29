@@ -55,7 +55,12 @@ def _mock_telephony():
 @pytest.fixture
 def client(seeded_engine):
     from backend.src.api.main import app
-    from backend.src.api.dependencies import get_db_session, get_telephony
+    from backend.src.api.dependencies import (
+        get_db_session,
+        get_telephony,
+        get_conversation,
+        get_calendar,
+    )
 
     def _override_session():
         with Session(seeded_engine) as session:
@@ -63,19 +68,18 @@ def client(seeded_engine):
 
     app.dependency_overrides[get_db_session] = _override_session
     app.dependency_overrides[get_telephony] = _mock_telephony
+    app.dependency_overrides[get_conversation] = lambda: MagicMock()
+    app.dependency_overrides[get_calendar] = lambda: MagicMock()
     yield TestClient(app)
     app.dependency_overrides.clear()
 
 
 class TestWebhookCabinetEntity:
-    @patch("backend.src.api.webhooks.telnyx_webhook._build_adapters")
     @patch("backend.src.api.webhooks.telnyx_webhook.AudioPipeline")
     def test_call_answered_passes_cabinet_entity(
-        self, mock_pipeline_cls, mock_build_adapters, client
+        self, mock_pipeline_cls, client
     ):
         """call.answered creates a Cabinet entity (not dict) in initial_state."""
-        mock_build_adapters.return_value = (MagicMock(), MagicMock())
-
         mock_pipeline = MagicMock()
         mock_pipeline.start = AsyncMock()
         mock_pipeline_cls.return_value = mock_pipeline
@@ -122,10 +126,9 @@ class TestWebhookCabinetEntity:
         assert cabinet.horaires == {"lundi": ["09:00-12:00"]}
         assert cabinet.tarifs == {"seance_kine": 16.13}
 
-    @patch("backend.src.api.webhooks.telnyx_webhook._build_adapters")
     @patch("backend.src.api.webhooks.telnyx_webhook.AudioPipeline")
     def test_call_answered_no_cabinet_passes_none(
-        self, mock_pipeline_cls, mock_build_adapters
+        self, mock_pipeline_cls
     ):
         """call.answered with no cabinet in DB passes None."""
         # Use an empty DB (no seeded cabinet)
@@ -137,7 +140,12 @@ class TestWebhookCabinetEntity:
         SQLModel.metadata.create_all(empty_engine)
 
         from backend.src.api.main import app
-        from backend.src.api.dependencies import get_db_session, get_telephony
+        from backend.src.api.dependencies import (
+            get_db_session,
+            get_telephony,
+            get_conversation,
+            get_calendar,
+        )
 
         def _override_session():
             with Session(empty_engine) as session:
@@ -145,10 +153,10 @@ class TestWebhookCabinetEntity:
 
         app.dependency_overrides[get_db_session] = _override_session
         app.dependency_overrides[get_telephony] = _mock_telephony
+        app.dependency_overrides[get_conversation] = lambda: MagicMock()
+        app.dependency_overrides[get_calendar] = lambda: MagicMock()
 
         empty_client = TestClient(app)
-
-        mock_build_adapters.return_value = (MagicMock(), MagicMock())
 
         mock_pipeline = MagicMock()
         mock_pipeline.start = AsyncMock()

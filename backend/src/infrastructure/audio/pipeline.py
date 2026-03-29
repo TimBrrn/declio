@@ -21,14 +21,11 @@ from backend.src.application.graph.nodes.thinking import thinking_node
 from backend.src.application.graph.nodes.tool_exec import tool_exec_node
 from backend.src.domain.ports.calendar_port import CalendarPort
 from backend.src.domain.ports.conversation_port import ConversationPort
-from backend.src.domain.value_objects.token_usage import (
-    DEEPGRAM_PRICE_PER_MINUTE,
-    ELEVENLABS_PRICE_PER_1K_CHARS,
-    USD_TO_EUR,
+from backend.src.domain.value_objects.token_usage import USD_TO_EUR
+from backend.src.infrastructure.config.pricing import (
+    get_stt_price_per_minute,
+    get_tts_price_per_1k_chars,
 )
-from backend.src.infrastructure.adapters.deepgram_stt import DeepgramSTTAdapter
-from backend.src.infrastructure.adapters.elevenlabs_tts import ElevenLabsTTSAdapter
-from backend.src.infrastructure.adapters.telnyx_telephony import TelnyxTelephonyAdapter
 from backend.src.infrastructure.audio.barge_in import BargeInDetector
 
 logger = logging.getLogger(__name__)
@@ -38,6 +35,7 @@ SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 MAX_CALL_DURATION = 300  # 5 minutes
 SILENCE_TIMEOUT = 15  # seconds
+UTTERANCE_PAUSE = 1.5  # seconds — wait for user to finish speaking before processing
 
 
 class AudioPipeline:
@@ -53,9 +51,9 @@ class AudioPipeline:
     def __init__(
         self,
         call_control_id: str,
-        telephony: TelnyxTelephonyAdapter,
-        stt: DeepgramSTTAdapter,
-        tts: ElevenLabsTTSAdapter,
+        telephony: Any,
+        stt: Any,
+        tts: Any,
         conversation: ConversationPort,
         calendar: CalendarPort,
         initial_state: dict,
@@ -146,8 +144,8 @@ class AudioPipeline:
         # Cost computation
         token_turns = self._state.get("token_turns") or []
         llm_cost_usd = sum(t.get("cost_usd", 0.0) for t in token_turns)
-        stt_cost_usd = (elapsed / 60) * DEEPGRAM_PRICE_PER_MINUTE
-        tts_cost_usd = (self._tts_chars / 1000) * ELEVENLABS_PRICE_PER_1K_CHARS
+        stt_cost_usd = (elapsed / 60) * get_stt_price_per_minute()
+        tts_cost_usd = (self._tts_chars / 1000) * get_tts_price_per_1k_chars()
         total_cost_usd = llm_cost_usd + stt_cost_usd + tts_cost_usd
 
         total_prompt_tokens = sum(t.get("prompt_tokens", 0) for t in token_turns)
@@ -179,150 +177,217 @@ class AudioPipeline:
         }
 
     async def _listen_loop(self) -> None:
-        """Main loop: stream audio → STT → LLM nodes → TTS → send audio."""
+        """Main loop: stream audio → STT → LLM nodes → TTS → send audio.
+
+        Uses a debounce (UTTERANCE_PAUSE) to accumulate transcript fragments
+        before sending to the LLM — lets the user finish their thought.
+        TTS runs as a non-blocking task so new STT transcripts can trigger
+        barge-in (interrupt the agent mid-speech).
+        """
+        speak_task: asyncio.Task | None = None
+        # Accumulator: collects transcript fragments until user pauses
+        pending_fragments: list[str] = []
+        pending_confidences: list[float] = []
+
         try:
             audio_stream = self._telephony.stream_audio(self.call_control_id)
-
-            async def _transcription_with_timeout():
-                """Wrap STT stream with silence and call duration timeouts."""
-                async for transcript, confidence in self._stt.transcribe_stream(
-                    audio_stream
-                ):
-                    yield transcript, confidence
+            stt_stream = self._stt.transcribe_stream(audio_stream)
+            stt_iter = stt_stream.__aiter__()
 
             silence_deadline = time.monotonic() + SILENCE_TIMEOUT
             call_deadline = self._start_time + MAX_CALL_DURATION
 
-            async for transcript, confidence in _transcription_with_timeout():
+            while self._running:
                 now = time.monotonic()
 
                 # Check max call duration
                 if now >= call_deadline:
-                    logger.info(
-                        "Max call duration reached (%ds) — ending call",
-                        MAX_CALL_DURATION,
-                    )
+                    if speak_task and not speak_task.done():
+                        self._barge_in.trigger_barge_in()
+                        speak_task.cancel()
                     await self._graceful_hangup(
                         "Je vous remercie pour votre appel, bonne journée !"
                     )
                     break
 
-                if not self._running:
+                # ── Wait for next transcript (with debounce timeout) ──
+                # If we have pending fragments, use short timeout to check
+                # if user keeps speaking. Otherwise, wait indefinitely.
+                timeout = UTTERANCE_PAUSE if pending_fragments else None
+
+                try:
+                    transcript, confidence = await asyncio.wait_for(
+                        stt_iter.__anext__(), timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Debounce expired — user stopped speaking, process now
+                    combined = " ".join(pending_fragments)
+                    avg_conf = (
+                        sum(pending_confidences) / len(pending_confidences)
+                        if pending_confidences
+                        else 0.0
+                    )
+                    pending_fragments.clear()
+                    pending_confidences.clear()
+
+                    await self._process_utterance(
+                        combined, avg_conf, speak_task
+                    )
+                    speak_task = self._pending_speak_task
+
+                    if self._state.get("should_hangup", False):
+                        logger.info("LLM → hangup")
+                        if speak_task:
+                            await speak_task
+                        await self._telephony.hangup(self.call_control_id)
+                        break
+                    continue
+                except StopAsyncIteration:
+                    # STT stream ended (call hangup / Deepgram closed)
                     break
 
-                # Barge-in: if patient speaks while agent is speaking
-                if self._barge_in.is_speaking:
-                    self._barge_in.trigger_barge_in()
-                    logger.info("Barge-in: re-listening after interruption")
+                now = time.monotonic()
+
+                # ── Barge-in: new transcript while agent is speaking ──
+                if speak_task and not speak_task.done():
+                    if transcript.strip():
+                        self._barge_in.trigger_barge_in()
+                        try:
+                            await speak_task
+                        except asyncio.CancelledError:
+                            pass
+                        speak_task = None
+                        logger.info("BARGE-IN: cut by '%s'", transcript[:60])
+                    else:
+                        continue
+
+                # Collect finished speak task
+                if speak_task and speak_task.done():
+                    speak_task = None
 
                 if not transcript.strip():
-                    # Check silence timeout
                     if now >= silence_deadline:
                         self._silence_count += 1
                         if self._silence_count >= 2:
-                            logger.info("Double silence timeout — hanging up")
+                            logger.info("Double silence — hanging up")
                             await self._graceful_hangup(
                                 "Au revoir, bonne journée !"
                             )
                             break
-                        logger.info("Silence timeout — prompting patient")
+                        logger.info("Silence — prompting")
                         await self._speak("Êtes-vous toujours là ?")
                         silence_deadline = now + SILENCE_TIMEOUT
                     continue
 
-                # Patient spoke — reset silence
+                # ── Accumulate fragment (debounce) ──
                 self._silence_count = 0
                 silence_deadline = time.monotonic() + SILENCE_TIMEOUT
+                pending_fragments.append(transcript)
+                pending_confidences.append(confidence)
 
-                self._stt_confidences.append(confidence)
-
-                # Record patient message
-                self._transcript.append({
-                    "role": "visitor",
-                    "content": transcript,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                })
-
-                t_start = time.monotonic()
-                logger.info(
-                    "Processing transcript: '%s' (confidence=%.2f)",
-                    transcript,
-                    confidence,
+            # Process any remaining fragments
+            if pending_fragments:
+                combined = " ".join(pending_fragments)
+                avg_conf = (
+                    sum(pending_confidences) / len(pending_confidences)
+                    if pending_confidences
+                    else 0.0
                 )
-
-                # Add HumanMessage to conversation history
-                self._state["messages"] = list(self._state.get("messages", [])) + [
-                    HumanMessage(content=transcript)
-                ]
-
-                # THINKING — call LLM
-                await self._run_thinking()
-
-                # TOOL_EXEC loop — execute tools until no more pending
-                while self._state.get("pending_tool_calls"):
-                    for tc in self._state["pending_tool_calls"]:
-                        name = tc.name if hasattr(tc, "name") else str(tc)
-                        if name not in self._actions:
-                            self._actions.append(name)
-
-                    try:
-                        tool_result = await tool_exec_node(
-                            self._state, calendar=self._calendar
-                        )
-                        self._state["messages"] = tool_result["messages"]
-                        self._state["pending_tool_calls"] = []
-                    except Exception:
-                        logger.exception("Tool execution error")
-                        self._state["pending_tool_calls"] = []
-                        break
-
-                    # Re-THINK after tool results
-                    await self._run_thinking()
-
-                t_graph = time.monotonic()
-                logger.info(
-                    "Latency LLM+tools: %.0fms",
-                    (t_graph - t_start) * 1000,
-                )
-
-                # Detect scenario from state
-                scenario = self._state.get("scenario", "")
-                if scenario:
-                    self._scenario = scenario
-
-                # Speak the response
-                response_text = self._state.get("response_text", "")
-                if response_text:
-                    self._last_response = response_text
-                    self._transcript.append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.now(UTC).isoformat(),
-                    })
-                    await self._speak(response_text)
-
-                t_end = time.monotonic()
-                logger.info(
-                    "Latency total turn: %.0fms",
-                    (t_end - t_start) * 1000,
-                )
-
-                # Check if LLM wants to hang up
-                if self._state.get("should_hangup", False):
-                    logger.info("LLM signaled hangup — ending call")
-                    await self._telephony.hangup(self.call_control_id)
-                    break
+                await self._process_utterance(combined, avg_conf, speak_task)
+                speak_task = self._pending_speak_task
 
         except asyncio.CancelledError:
-            logger.info("Listen loop cancelled for call %s", self.call_control_id)
+            pass
         except Exception as e:
-            logger.exception("Error in listen loop for call %s", self.call_control_id)
+            logger.exception("Listen loop error for call %s", self.call_control_id)
             self._error = str(e)
             self._scenario = "error"
+            if speak_task and not speak_task.done():
+                speak_task.cancel()
             await self._graceful_hangup(
                 "Je rencontre un petit souci technique. "
                 "Puis-je prendre votre nom et numéro "
                 "pour que le cabinet vous rappelle ?"
+            )
+        finally:
+            if speak_task and not speak_task.done():
+                speak_task.cancel()
+
+    # Temporary storage for speak task created in _process_utterance
+    _pending_speak_task: asyncio.Task | None = None
+
+    async def _process_utterance(
+        self,
+        transcript: str,
+        confidence: float,
+        current_speak_task: asyncio.Task | None,
+    ) -> None:
+        """Process a complete user utterance: STT → LLM → tools → TTS."""
+        self._pending_speak_task = None
+
+        if not transcript.strip():
+            return
+
+        self._stt_confidences.append(confidence)
+        self._transcript.append({
+            "role": "visitor",
+            "content": transcript,
+            "timestamp": datetime.now(UTC).isoformat(),
+        })
+
+        t_start = time.monotonic()
+        logger.info("STT → '%s' (%.0f%%)", transcript, confidence * 100)
+
+        # Add HumanMessage to conversation history
+        self._state["messages"] = list(self._state.get("messages", [])) + [
+            HumanMessage(content=transcript)
+        ]
+
+        # THINKING — call LLM
+        await self._run_thinking()
+
+        # TOOL_EXEC loop
+        while self._state.get("pending_tool_calls"):
+            for tc in self._state["pending_tool_calls"]:
+                name = tc.name if hasattr(tc, "name") else str(tc)
+                if name not in self._actions:
+                    self._actions.append(name)
+
+            try:
+                tool_result = await tool_exec_node(
+                    self._state, calendar=self._calendar
+                )
+                self._state["messages"] = tool_result["messages"]
+                self._state["pending_tool_calls"] = []
+            except Exception:
+                logger.exception("Tool execution error")
+                self._state["pending_tool_calls"] = []
+                break
+
+            await self._run_thinking()
+
+        t_graph = time.monotonic()
+
+        scenario = self._state.get("scenario", "")
+        if scenario:
+            self._scenario = scenario
+
+        # Speak response — NON-BLOCKING (allows barge-in)
+        response_text = self._state.get("response_text", "")
+        if response_text:
+            self._last_response = response_text
+            self._transcript.append({
+                "role": "assistant",
+                "content": response_text,
+                "timestamp": datetime.now(UTC).isoformat(),
+            })
+            logger.info(
+                "LLM %.0fms → speaking %d chars",
+                (t_graph - t_start) * 1000,
+                len(response_text),
+            )
+            self._pending_speak_task = asyncio.create_task(
+                self._speak(response_text)
             )
 
     async def _run_thinking(self) -> None:
@@ -377,19 +442,16 @@ class AudioPipeline:
                 if not sentence.strip():
                     continue
                 if self._barge_in.cancel_tts.is_set():
-                    logger.info("TTS cancelled by barge-in mid-sentence")
                     break
 
                 async for audio_chunk in self._tts.synthesize_stream(sentence):
                     if self._barge_in.cancel_tts.is_set():
-                        logger.info("TTS cancelled by barge-in mid-chunk")
                         break
 
                     if first_chunk:
-                        t_first = time.monotonic()
                         logger.info(
-                            "Latency TTS first chunk: %.0fms",
-                            (t_first - t_start) * 1000,
+                            "TTS first chunk: %.0fms",
+                            (time.monotonic() - t_start) * 1000,
                         )
                         first_chunk = False
 

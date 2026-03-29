@@ -19,6 +19,8 @@ DEFAULT_VOICE_ID = "pFZP5JQG7iQjIQuC4Bku"  # ElevenLabs "Lily" (French)
 class ElevenLabsTTSAdapter:
     """Implements TTSPort — streams text to ElevenLabs, yields audio chunks (mulaw 8kHz)."""
 
+    model_name: str = "eleven_multilingual_v2"
+
     def __init__(self) -> None:
         self._client = ElevenLabs(api_key=settings.elevenlabs_api_key)
         self._voice_id = settings.elevenlabs_voice_id or DEFAULT_VOICE_ID
@@ -32,7 +34,7 @@ class ElevenLabsTTSAdapter:
         if not text.strip():
             return
 
-        logger.info("TTS: synthesizing %d chars", len(text))
+        logger.debug("TTS: synthesizing %d chars", len(text))
         loop = asyncio.get_running_loop()
         chunk_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 

@@ -9,6 +9,7 @@ from backend.src.api.routes.auth import router as auth_router
 from backend.src.api.routes.cabinets import router as cabinets_router
 from backend.src.api.routes.calls import router as calls_router
 from backend.src.api.routes.health import router as health_router
+from backend.src.api.routes.patients import router as patients_router
 from backend.src.api.routes.usage import router as usage_router
 from backend.src.api.webhooks.telnyx_webhook import router as telnyx_router
 from backend.src.api.websockets.audio_ws import router as audio_ws_router
@@ -51,5 +52,6 @@ app.include_router(auth_router)
 app.include_router(cabinets_router)
 app.include_router(calls_router)
 app.include_router(health_router)
+app.include_router(patients_router)
 app.include_router(usage_router)
 app.include_router(audio_ws_router)

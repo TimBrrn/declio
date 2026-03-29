@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from backend.src.api.dependencies import get_db_session
-# from backend.src.api.middleware.auth import get_current_user  # TODO: réactiver après PoC
+from backend.src.api.middleware.auth import get_current_user
 from backend.src.infrastructure.persistence.models import CabinetModel
 
 router = APIRouter(prefix="/api/cabinets", tags=["cabinets"])
@@ -58,7 +58,10 @@ def _cabinet_to_response(cabinet: CabinetModel) -> dict:
 
 
 @router.get("/current")
-def get_current_cabinet(session: Session = Depends(get_db_session)):
+def get_current_cabinet(
+    session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
+):
     """Return the first (and only for PoC) cabinet. 404 if none exists."""
     cabinet = session.exec(select(CabinetModel)).first()
     if not cabinet:
@@ -67,13 +70,20 @@ def get_current_cabinet(session: Session = Depends(get_db_session)):
 
 
 @router.get("/")
-def list_cabinets(session: Session = Depends(get_db_session)):
+def list_cabinets(
+    session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
+):
     cabinets = session.exec(select(CabinetModel)).all()
     return [_cabinet_to_response(c) for c in cabinets]
 
 
 @router.get("/{cabinet_id}")
-def get_cabinet(cabinet_id: str, session: Session = Depends(get_db_session)):
+def get_cabinet(
+    cabinet_id: str,
+    session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
+):
     cabinet = session.get(CabinetModel, cabinet_id)
     if not cabinet:
         raise HTTPException(status_code=404, detail="Cabinet not found")
@@ -82,7 +92,9 @@ def get_cabinet(cabinet_id: str, session: Session = Depends(get_db_session)):
 
 @router.post("/", status_code=201)
 def create_cabinet(
-    data: CabinetCreate, session: Session = Depends(get_db_session)
+    data: CabinetCreate,
+    session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     # Separate JSON fields from scalar fields
     dump = data.model_dump()
@@ -106,6 +118,7 @@ def update_cabinet(
     cabinet_id: str,
     data: CabinetUpdate,
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     cabinet = session.get(CabinetModel, cabinet_id)
     if not cabinet:

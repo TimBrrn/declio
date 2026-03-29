@@ -11,7 +11,7 @@ def _mock_llm_response(
     tools: list[ToolCall] | None = None,
     prompt_tokens: int = 100,
     completion_tokens: int = 50,
-    model: str = "gpt-4o",
+    model: str = "mistral-small-latest",
 ) -> tuple[str, list[ToolCall], TokenUsage]:
     """Build a 3-tuple matching ConversationPort.chat_with_tools return type."""
     return (

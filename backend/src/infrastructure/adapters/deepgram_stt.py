@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 class DeepgramSTTAdapter:
     """Implements STTPort — streams audio to Deepgram, yields (text, confidence)."""
 
+    model_name: str = "nova-2"
+
     def __init__(self) -> None:
         self._client = DeepgramClient(api_key=settings.deepgram_api_key)
 
@@ -33,31 +35,42 @@ class DeepgramSTTAdapter:
         result_queue: asyncio.Queue[tuple[str, float] | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
-        def on_message(result: ListenV1Results) -> None:
-            alt = result.channel.alternatives[0] if result.channel.alternatives else None
+        def on_message(message) -> None:
+            # SDK v6 emits all message types via EventType.MESSAGE
+            if not isinstance(message, ListenV1Results):
+                return
+
+            alt = message.channel.alternatives[0] if message.channel.alternatives else None
             if not alt or not alt.transcript:
                 return
 
-            if result.is_final:
-                logger.info(
-                    "STT final: '%s' (confidence=%.2f)",
-                    alt.transcript,
-                    alt.confidence,
-                )
+            if message.is_final:
                 loop.call_soon_threadsafe(
                     result_queue.put_nowait,
                     (alt.transcript, alt.confidence),
                 )
-            else:
-                logger.debug("STT interim: '%s'", alt.transcript)
 
-        def on_error(error: Exception) -> None:
+        def on_error(error) -> None:
             logger.error("Deepgram error: %s", error)
 
         socket_client = None
 
         def _run_deepgram(audio_chunks: deque[bytes], done_event: threading.Event) -> None:
             nonlocal socket_client
+
+            def _send_audio(sc_ref, chunks_ref, done_ref):
+                """Send audio chunks to Deepgram (runs in its own thread)."""
+                while not done_ref.is_set():
+                    try:
+                        chunk = chunks_ref.popleft()
+                        sc_ref.send_media(chunk)
+                    except IndexError:
+                        done_ref.wait(timeout=0.01)
+                try:
+                    sc_ref.send_close_stream()
+                except Exception:
+                    pass
+
             try:
                 with self._client.listen.v1.connect(
                     model="nova-2",
@@ -71,18 +84,24 @@ class DeepgramSTTAdapter:
                     endpointing="300",
                 ) as sc:
                     socket_client = sc
-                    sc.on("Results", on_message)
-                    sc.on("Error", on_error)
+                    sc.on("message", on_message)
+                    sc.on("error", on_error)
+
+                    # start_listening() blocks (receive loop), so send audio
+                    # from a separate thread
+                    send_thread = threading.Thread(
+                        target=_send_audio,
+                        args=(sc, audio_chunks, done_event),
+                        daemon=True,
+                    )
+                    send_thread.start()
+
+                    # Blocks until Deepgram WS closes
                     sc.start_listening()
 
-                    while not done_event.is_set():
-                        try:
-                            chunk = audio_chunks.popleft()
-                            sc.send_media(chunk)
-                        except IndexError:
-                            done_event.wait(timeout=0.01)
-
-                    sc.send_close_stream()
+                    # WS closed — signal the send thread to stop
+                    done_event.set()
+                    send_thread.join(timeout=2)
             except Exception as e:
                 logger.error("Deepgram connection error: %s", e)
             finally:

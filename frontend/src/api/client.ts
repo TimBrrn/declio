@@ -146,14 +146,38 @@ export interface ApiUsageEntry {
   duration_seconds: number
 }
 
+export interface Patient {
+  id: string
+  cabinet_id: string
+  nom: string
+  telephone: string
+  email: string
+  created_at: string
+}
+
+export interface PatientCreate {
+  cabinet_id: string
+  nom: string
+  telephone?: string
+  email?: string
+}
+
+export interface PatientUpdate {
+  nom?: string
+  telephone?: string
+  email?: string
+}
+
 export interface Appointment {
   id: string
   cabinet_id: string
+  patient_id: string | null
   patient_nom: string
   patient_telephone: string
   date_heure: string  // ISO datetime
   duree_minutes: number
   status: 'confirmed' | 'cancelled'
+  source: string
   google_event_id: string
   created_at: string
 }
@@ -247,6 +271,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`API ${res.status}: ${res.statusText}`)
   }
   return res.json()
+}
+
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  const headers: Record<string, string> = {}
+  const token = getAuthToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers,
+    ...init,
+  })
+  if (res.status === 401) {
+    localStorage.removeItem('declio_auth_token')
+    localStorage.removeItem('declio_auth_user')
+    window.location.href = '/login'
+    throw new Error('Session expiree')
+  }
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${res.statusText}`)
+  }
 }
 
 // ── Cabinet ──────────────────────────────────────────────────────────────────
@@ -345,12 +390,34 @@ export async function updateAppointment(id: string, data: AppointmentUpdate): Pr
 }
 
 export async function deleteAppointment(id: string): Promise<void> {
-  const headers: Record<string, string> = {}
-  const token = getAuthToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${BASE_URL}/appointments/${id}`, {
-    method: 'DELETE',
-    headers,
+  return requestVoid(`/appointments/${id}`, { method: 'DELETE' })
+}
+
+// ── Patients ──────────────────────────────────────────────────────────────────
+
+export async function getPatients(cabinetId?: string): Promise<Patient[]> {
+  const params = cabinetId ? `?cabinet_id=${cabinetId}` : ''
+  return request<Patient[]>(`/patients${params}`)
+}
+
+export async function getPatient(id: string): Promise<Patient> {
+  return request<Patient>(`/patients/${id}`)
+}
+
+export async function createPatient(data: PatientCreate): Promise<Patient> {
+  return request<Patient>('/patients', {
+    method: 'POST',
+    body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`)
+}
+
+export async function updatePatient(id: string, data: PatientUpdate): Promise<Patient> {
+  return request<Patient>(`/patients/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deletePatient(id: string): Promise<void> {
+  return requestVoid(`/patients/${id}`, { method: 'DELETE' })
 }

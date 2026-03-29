@@ -49,7 +49,7 @@ async def audio_websocket(websocket: WebSocket, call_control_id: str):
     bytes_received = 0
     bytes_sent = 0
 
-    logger.info("WS connected for call %s", call_control_id)
+    logger.debug("WS connected for call %s", call_control_id)
 
     async def _heartbeat_loop():
         """Send native WS pings to keep the connection alive."""
@@ -146,14 +146,11 @@ async def audio_websocket(websocket: WebSocket, call_control_id: str):
         # Log session stats
         duration = time.monotonic() - t_connect
         logger.info(
-            "WS disconnected for call %s — duration=%.1fs "
-            "chunks_in=%d (%d bytes) chunks_out=%d (%d bytes)",
-            call_control_id,
+            "WS closed %s — %.0fs, in=%d out=%d chunks",
+            call_control_id[:20],
             duration,
             chunks_received,
-            bytes_received,
             chunks_sent,
-            bytes_sent,
         )
 
         # Delegate to telephony adapter for reconnexion or cleanup

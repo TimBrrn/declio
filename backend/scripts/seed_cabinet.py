@@ -43,7 +43,7 @@ def seed_cabinet() -> None:
             telephone="01 45 87 12 34",
             google_calendar_id=os.environ.get("GOOGLE_CALENDAR_ID", ""),
             numero_sms_kine=os.environ.get("NUMERO_SMS_KINE", ""),
-            message_accueil="Bonjour, vous êtes bien au cabinet de {nom_praticien}, kinésithérapeute. Je suis l'assistant vocal du cabinet. Je peux vous aider à prendre un rendez-vous, annuler ou reporter un rendez-vous, ou répondre à vos questions sur le cabinet. Comment puis-je vous aider ?",
+            message_accueil="Cabinet {nom_cabinet}, bonjour ! Vous êtes en ligne avec l'assistant du cabinet de {nom_praticien}. Que puis-je faire pour vous ?",
         )
         cabinet.horaires = {
             "lundi": ["09:00-12:00", "14:00-19:00"],

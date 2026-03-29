@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 logs/
+declio.db
+frontend/.tanstack/tmp/

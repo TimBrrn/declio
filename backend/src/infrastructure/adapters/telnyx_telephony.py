@@ -39,17 +39,30 @@ class TelnyxTelephonyAdapter:
         self._reconnect_events: dict[str, asyncio.Event] = {}  # set when new WS connects
 
     async def answer_call(self, call_control_id: str) -> None:
-        logger.info("Answering call %s", call_control_id)
+        """Answer the call AND start bidirectional audio streaming in one API call.
+
+        Telnyx SDK v4 answer() supports stream_* params directly, which
+        eliminates a second API roundtrip (~800ms saved).
+        """
+        stream_url = f"{settings.stream_base_url}/ws/audio/{call_control_id}"
+        logger.info("Answering + streaming → %s", call_control_id[:20])
         await asyncio.to_thread(
-            self._client.calls.actions.answer, call_control_id
+            self._client.calls.actions.answer,
+            call_control_id,
+            stream_url=stream_url,
+            stream_track="inbound_track",
+            stream_bidirectional_mode="rtp",
+            stream_bidirectional_codec="PCMU",
         )
 
     async def start_audio_stream(self, call_control_id: str) -> None:
-        """Tell Telnyx to start streaming audio via WebSocket (bidirectional)."""
+        """Tell Telnyx to start streaming audio via WebSocket (bidirectional).
+
+        NOTE: In normal flow, streaming is started by answer_call() directly.
+        This method is kept for reconnection scenarios (on_ws_disconnect).
+        """
         stream_url = f"{settings.stream_base_url}/ws/audio/{call_control_id}"
-        logger.info(
-            "Starting audio stream for call %s → %s", call_control_id, stream_url
-        )
+        logger.info("Re-starting audio stream → %s", call_control_id[:20])
         await asyncio.to_thread(
             self._client.calls.actions.start_streaming,
             call_control_id,
@@ -82,28 +95,18 @@ class TelnyxTelephonyAdapter:
         """
         queue = self._send_queues.get(call_control_id)
         if queue is None:
-            logger.warning(
-                "send_audio called but no send queue for call %s — dropping %d bytes",
-                call_control_id,
-                len(audio_data),
-            )
             return
 
         if queue.full():
             try:
-                queue.get_nowait()  # drop oldest
+                queue.get_nowait()  # drop oldest (backpressure)
             except asyncio.QueueEmpty:
                 pass
-            logger.debug(
-                "Send queue full for call %s — dropped oldest chunk", call_control_id
-            )
 
         try:
             queue.put_nowait(audio_data)
         except asyncio.QueueFull:
-            logger.warning(
-                "Send queue still full after drop for call %s", call_control_id
-            )
+            pass
 
     def get_send_queue(self, call_control_id: str) -> asyncio.Queue[bytes | None]:
         """Return the outbound audio queue for the WS handler to consume.
@@ -117,7 +120,7 @@ class TelnyxTelephonyAdapter:
         return self._send_queues[call_control_id]
 
     async def hangup(self, call_control_id: str) -> None:
-        logger.info("Hanging up call %s", call_control_id)
+        logger.info("Hangup → %s", call_control_id[:20])
         await asyncio.to_thread(
             self._client.calls.actions.hangup, call_control_id
         )
@@ -138,8 +141,6 @@ class TelnyxTelephonyAdapter:
         event = self._reconnect_events.get(call_control_id)
         if event:
             event.set()
-
-        logger.info("WS connected for call %s", call_control_id)
 
     async def on_ws_disconnect(self, call_control_id: str) -> bool:
         """Called when a WebSocket handler disconnects.
@@ -226,7 +227,7 @@ class TelnyxTelephonyAdapter:
         self._reconnect_locks.pop(call_control_id, None)
         self._reconnect_events.pop(call_control_id, None)
 
-        logger.info("Audio ended (permanent cleanup) for call %s", call_control_id)
+        logger.debug("Audio cleanup for %s", call_control_id[:20])
 
     def get_connection_state(self, call_control_id: str) -> str:
         """Return the connection state for a call. Used in tests."""

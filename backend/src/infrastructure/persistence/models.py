@@ -64,16 +64,29 @@ class CabinetModel(SQLModel, table=True):
         }
 
 
+class PatientModel(SQLModel, table=True):
+    __tablename__ = "patients"
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    cabinet_id: str = Field(foreign_key="cabinets.id")
+    nom: str = ""
+    telephone: str = ""
+    email: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class AppointmentModel(SQLModel, table=True):
     __tablename__ = "appointments"
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     cabinet_id: str = Field(foreign_key="cabinets.id")
+    patient_id: str | None = Field(default=None, foreign_key="patients.id")
     patient_nom: str = ""
     patient_telephone: str = ""
     date_heure: datetime
     duree_minutes: int = 30
     status: str = "confirmed"  # confirmed, cancelled, completed
+    source: str = "manual"  # manual, ai_call
     google_event_id: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

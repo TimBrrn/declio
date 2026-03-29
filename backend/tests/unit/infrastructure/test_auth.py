@@ -31,13 +31,20 @@ def test_engine():
 @pytest.fixture
 def client(test_engine):
     from backend.src.api.main import app
-    from backend.src.api.dependencies import get_db_session
+    from backend.src.api.dependencies import (
+        get_db_session,
+        get_conversation,
+        get_calendar,
+    )
+    from unittest.mock import MagicMock
 
     def _override_session():
         with Session(test_engine) as session:
             yield session
 
     app.dependency_overrides[get_db_session] = _override_session
+    app.dependency_overrides[get_conversation] = lambda: MagicMock()
+    app.dependency_overrides[get_calendar] = lambda: MagicMock()
     yield TestClient(app)
     app.dependency_overrides.clear()
 

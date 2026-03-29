@@ -29,14 +29,16 @@ def health_check(session: Session = Depends(get_db_session)):
     # Telnyx — check API key is configured
     services["telnyx"] = "ok" if settings.telnyx_api_key else "error"
 
-    # Deepgram — check API key is configured
-    services["deepgram"] = "ok" if settings.deepgram_api_key else "error"
+    # Mistral — single key for STT + LLM + TTS (new stack)
+    services["mistral"] = "ok" if settings.mistral_api_key else "error"
 
-    # OpenAI — check API key is configured
-    services["openai"] = "ok" if settings.openai_api_key else "error"
-
-    # ElevenLabs — check API key is configured
-    services["elevenlabs"] = "ok" if settings.elevenlabs_api_key else "error"
+    # Legacy providers — only check if actively selected
+    if settings.stt_provider == "deepgram":
+        services["deepgram"] = "ok" if settings.deepgram_api_key else "error"
+    if settings.llm_provider == "openai" or settings.tts_provider == "openai":
+        services["openai"] = "ok" if settings.openai_api_key else "error"
+    if settings.tts_provider == "elevenlabs":
+        services["elevenlabs"] = "ok" if settings.elevenlabs_api_key else "error"
 
     all_ok = all(v == "ok" for v in services.values())
 

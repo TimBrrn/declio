@@ -42,12 +42,13 @@ class TestHealthEndpoint:
         assert "version" in data
         assert data["version"] == "0.1.0"
 
-    def test_health_has_all_services(self, client):
-        """Health response includes all expected services."""
+    def test_health_has_core_services(self, client):
+        """Health response includes core services (database, telnyx, mistral)."""
         resp = client.get("/api/health")
         services = resp.json()["services"]
-        expected = {"database", "telnyx", "deepgram", "openai", "elevenlabs"}
-        assert set(services.keys()) == expected
+        assert "database" in services
+        assert "telnyx" in services
+        assert "mistral" in services
 
     def test_health_database_ok(self, client):
         """Database check works with in-memory test DB."""

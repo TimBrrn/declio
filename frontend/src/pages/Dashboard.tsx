@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { getCalls, getUsageSummary, type CallRecord, type CallScenario } from '../api/client'
-import { StatusBadge } from '../components/StatusBadge'
-import { formatDate, formatDuration, SCENARIO_LABELS, SCENARIO_COLORS } from '../utils/format'
+import { getCalls, getUsageSummary, type CallScenario } from '../api/client'
+import { formatDuration, SCENARIO_LABELS, SCENARIO_COLORS } from '../utils/format'
 
 const ALL_SCENARIOS: CallScenario[] = ['booking', 'cancellation', 'faq', 'out_of_scope', 'error']
 
@@ -36,7 +35,7 @@ export function Dashboard() {
   if (isError) {
     return (
       <div className="text-center py-16">
-        <p className="text-sm text-amber-800">Impossible de joindre le serveur. Verifiez que le backend est lance.</p>
+        <p className="text-sm text-stone-500">Impossible de joindre le serveur. Verifiez que le backend est lance.</p>
       </div>
     )
   }
@@ -49,7 +48,7 @@ export function Dashboard() {
         <h1 className="text-2xl font-semibold text-stone-900">Dashboard</h1>
         <p className="mt-1 text-sm text-stone-500">Vue d'ensemble de l'activite de votre assistant vocal.</p>
         <div className="mt-16 text-center py-16">
-          <svg className="mx-auto w-16 h-16 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+          <svg className="mx-auto w-14 h-14 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
           </svg>
           <h3 className="mt-4 text-base font-medium text-stone-900">Aucun appel traite</h3>
@@ -72,7 +71,6 @@ export function Dashboard() {
     return d >= yesterday && d < today
   })
 
-  // Stats
   const callsToday = todayCalls.length
   const callsYesterday = yesterdayCalls.length
   const trendPct = callsYesterday > 0
@@ -87,11 +85,6 @@ export function Dashboard() {
 
   const resolved = allCalls.filter(c => c.scenario !== 'error' && c.scenario !== 'out_of_scope')
   const resolutionRate = allCalls.length > 0 ? Math.round((resolved.length / allCalls.length) * 100) : 0
-
-  const avgConfidence = allCalls.length > 0
-    ? Math.round((allCalls.reduce((s, c) => s + c.stt_confidence_score, 0) / allCalls.length) * 100)
-    : 0
-  const confidenceColor = avgConfidence >= 80 ? 'text-primary-700' : avgConfidence >= 60 ? 'text-amber-700' : 'text-rose-700'
 
   // Chart: last 7 days
   const days: Date[] = []
@@ -112,9 +105,26 @@ export function Dashboard() {
 
   const maxTotal = Math.max(...chartData.map(d => d.total), 1)
 
-  // Recent calls (5 last)
-  const recentCalls = [...allCalls]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  // Scenario breakdown
+  const scenarioCounts = ALL_SCENARIOS.map(s => ({
+    scenario: s,
+    count: allCalls.filter(c => c.scenario === s).length,
+  })).filter(s => s.count > 0)
+
+  // Top callers (unique phone numbers, sorted by call count)
+  const callerMap = new Map<string, { count: number; lastScenario: CallScenario; totalDuration: number }>()
+  for (const c of allCalls) {
+    const entry = callerMap.get(c.caller_phone)
+    if (entry) {
+      entry.count++
+      entry.totalDuration += c.duration_seconds
+      entry.lastScenario = c.scenario
+    } else {
+      callerMap.set(c.caller_phone, { count: 1, lastScenario: c.scenario, totalDuration: c.duration_seconds })
+    }
+  }
+  const topCallers = [...callerMap.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
     .slice(0, 5)
 
   return (
@@ -123,47 +133,30 @@ export function Dashboard() {
       <p className="mt-1 text-sm text-stone-500">Vue d'ensemble de l'activite de votre assistant vocal.</p>
 
       {/* Stats cards */}
-      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Appels aujourd'hui"
           value={String(callsToday)}
           trend={trendPct}
-          icon={<PhoneIcon />}
         />
         <StatCard
           label="Duree moyenne"
           value={`${avgMin}:${String(avgSec).padStart(2, '0')}`}
           subtitle="min:sec"
-          icon={<ClockIcon />}
         />
         <StatCard
           label="Taux de resolution"
           value={`${resolutionRate}%`}
-          subtitle={`${resolved.length}/${allCalls.length} appels`}
-          icon={<CheckIcon />}
-        />
-        <StatCard
-          label="Confiance STT"
-          value={`${avgConfidence}%`}
-          valueColor={confidenceColor}
-          icon={<WaveIcon />}
+          subtitle={`${resolved.length}/${allCalls.length}`}
         />
         <StatCard
           label="Cout total"
-          value={usageSummary ? `${usageSummary.total_cost_eur.toFixed(2)}` : '—'}
-          subtitle="EUR"
-          icon={<CostIcon />}
-        />
-        <StatCard
-          label="Cout moyen / appel"
-          value={usageSummary ? `${usageSummary.avg_cost_per_call_eur.toFixed(3)}` : '—'}
-          subtitle="EUR"
-          icon={<CostIcon />}
+          value={usageSummary ? `${usageSummary.total_cost_eur.toFixed(2)} EUR` : '--'}
         />
       </div>
 
       {/* Activity chart */}
-      <div className="mt-8 bg-white rounded-xl shadow-sm p-6">
+      <div className="mt-8 bg-white rounded-2xl border border-stone-200/60 p-6">
         <h2 className="text-base font-semibold text-stone-900">Activite — 7 derniers jours</h2>
         <div className="mt-4 flex items-end gap-2 sm:gap-3 h-48">
           {chartData.map((d, i) => (
@@ -174,30 +167,71 @@ export function Dashboard() {
         <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1">
           {ALL_SCENARIOS.map(s => (
             <div key={s} className="flex items-center gap-1.5">
-              <span className={`w-2.5 h-2.5 rounded-sm ${SCENARIO_COLORS[s]}`} />
+              <span className={`w-2 h-2 rounded-full ${SCENARIO_COLORS[s]}`} />
               <span className="text-xs text-stone-500">{SCENARIO_LABELS[s]}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Recent calls */}
-      <div className="mt-8">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-stone-900">Derniers appels</h2>
-          <Link to="/calls" className="text-sm text-primary-600 hover:text-primary-700 no-underline font-medium">
-            Voir tout
-          </Link>
-        </div>
-        {recentCalls.length === 0 ? (
-          <p className="mt-4 text-sm text-stone-500">Aucun appel pour le moment.</p>
-        ) : (
-          <div className="mt-4 space-y-3">
-            {recentCalls.map(call => (
-              <RecentCallCard key={call.id} call={call} />
-            ))}
+      {/* Bottom row: Scenario breakdown + Top callers */}
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Scenario breakdown */}
+        <div className="bg-white rounded-2xl border border-stone-200/60 p-6">
+          <h2 className="text-base font-semibold text-stone-900">Repartition par type</h2>
+          <div className="mt-5 space-y-3">
+            {scenarioCounts.map(({ scenario, count }) => {
+              const pct = Math.round((count / allCalls.length) * 100)
+              return (
+                <div key={scenario}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-stone-600">{SCENARIO_LABELS[scenario]}</span>
+                    <span className="text-sm text-stone-400">{count} ({pct}%)</span>
+                  </div>
+                  <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${SCENARIO_COLORS[scenario]}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
           </div>
-        )}
+          {scenarioCounts.length === 0 && (
+            <p className="mt-4 text-sm text-stone-400">Aucune donnee.</p>
+          )}
+        </div>
+
+        {/* Top callers */}
+        <div className="bg-white rounded-2xl border border-stone-200/60 p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-stone-900">Appelants frequents</h2>
+            <Link to="/calls" className="text-sm text-primary-600 hover:text-primary-700 no-underline font-medium">
+              Voir tout
+            </Link>
+          </div>
+          <div className="mt-4 space-y-3">
+            {topCallers.map(([phone, data]) => (
+              <div key={phone} className="flex items-center justify-between py-2">
+                <div className="min-w-0">
+                  <span className="text-sm font-mono text-stone-900">{phone}</span>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs text-stone-400">
+                      {data.count} appel{data.count > 1 ? 's' : ''}
+                    </span>
+                    <span className="text-xs text-stone-300">·</span>
+                    <span className="text-xs text-stone-400">{formatDuration(data.totalDuration)}</span>
+                  </div>
+                </div>
+                <span className="text-xs text-stone-400 shrink-0">{SCENARIO_LABELS[data.lastScenario]}</span>
+              </div>
+            ))}
+            {topCallers.length === 0 && (
+              <p className="text-sm text-stone-400">Aucun appelant.</p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -205,22 +239,17 @@ export function Dashboard() {
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
-function StatCard({ label, value, trend, subtitle, icon, valueColor }: {
+function StatCard({ label, value, trend, subtitle }: {
   label: string
   value: string
   trend?: number
   subtitle?: string
-  icon: React.ReactNode
-  valueColor?: string
 }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm p-5">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-stone-500">{label}</span>
-        <div className="text-stone-400">{icon}</div>
-      </div>
+    <div className="bg-white rounded-2xl border border-stone-200/60 p-5">
+      <span className="text-sm text-stone-500">{label}</span>
       <div className="mt-2 flex items-baseline gap-2">
-        <span className={`text-2xl font-semibold ${valueColor ?? 'text-stone-900'}`}>{value}</span>
+        <span className="text-2xl font-semibold text-stone-900">{value}</span>
         {trend !== undefined && trend !== 0 && (
           <span className={`text-xs font-medium ${trend > 0 ? 'text-primary-600' : 'text-rose-600'}`}>
             {trend > 0 ? '+' : ''}{trend}%
@@ -251,7 +280,7 @@ function BarColumn({ data, maxTotal }: {
           <div className="font-medium mb-1">{formatDayLabel(data.day)} — {data.total} appel{data.total > 1 ? 's' : ''}</div>
           {ALL_SCENARIOS.map(s => data.byScenario[s] > 0 && (
             <div key={s} className="flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-sm ${SCENARIO_COLORS[s]}`} />
+              <span className={`w-2 h-2 rounded-full ${SCENARIO_COLORS[s]}`} />
               <span>{SCENARIO_LABELS[s]}: {data.byScenario[s]}</span>
             </div>
           ))}
@@ -278,26 +307,7 @@ function BarColumn({ data, maxTotal }: {
           </div>
         )}
       </div>
-      {/* Label */}
-      <span className="text-xs text-stone-500 mt-1">{formatDayLabel(data.day)}</span>
-    </div>
-  )
-}
-
-function RecentCallCard({ call }: { call: CallRecord }) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-4 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-stone-900">{formatDate(call.created_at)}</span>
-        <StatusBadge scenario={call.scenario} />
-      </div>
-      <div className="flex items-center gap-4 text-sm text-stone-500">
-        <span className="font-mono text-xs">{call.caller_phone}</span>
-        <span>{formatDuration(call.duration_seconds)}</span>
-      </div>
-      {call.summary && (
-        <p className="text-sm text-stone-600 truncate">{call.summary}</p>
-      )}
+      <span className="text-xs text-stone-400 mt-1">{formatDayLabel(data.day)}</span>
     </div>
   )
 }
@@ -306,61 +316,17 @@ function DashboardSkeleton() {
   return (
     <div className="animate-pulse space-y-6">
       <div className="h-8 w-48 bg-stone-200 rounded" />
-      <div className="h-4 w-72 bg-stone-200 rounded" />
+      <div className="h-4 w-72 bg-stone-100 rounded" />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-24 bg-stone-200 rounded-xl" />
+          <div key={i} className="h-24 bg-stone-100 rounded-2xl" />
         ))}
       </div>
-      <div className="h-64 bg-stone-200 rounded-xl" />
-      <div className="space-y-3">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="h-20 bg-stone-200 rounded-xl" />
-        ))}
+      <div className="h-64 bg-stone-100 rounded-2xl" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="h-48 bg-stone-100 rounded-2xl" />
+        <div className="h-48 bg-stone-100 rounded-2xl" />
       </div>
     </div>
   )
 }
-
-// ── Icons ────────────────────────────────────────────────────────────────────
-
-function PhoneIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
-    </svg>
-  )
-}
-
-function ClockIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  )
-}
-
-function CheckIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  )
-}
-
-function CostIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  )
-}
-
-function WaveIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9.348 14.651a3.75 3.75 0 010-5.303m5.304 0a3.75 3.75 0 010 5.303m-7.425 2.122a6.75 6.75 0 010-9.546m9.546 0a6.75 6.75 0 010 9.546M5.106 18.894c-3.808-3.808-3.808-9.98 0-13.789m13.788 0c3.808 3.808 3.808 9.981 0 13.79" />
-    </svg>
-  )
-}
-

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
 from backend.src.api.dependencies import get_db_session
-# from backend.src.api.middleware.auth import get_current_user  # TODO: réactiver après PoC
+from backend.src.api.middleware.auth import get_current_user
 from backend.src.infrastructure.persistence.models import ApiUsageModel, CallRecordModel
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
@@ -17,6 +17,7 @@ def list_calls(
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     statement = select(CallRecordModel)
     if cabinet_id:
@@ -38,6 +39,7 @@ def list_calls(
 def call_usage(
     call_id: str,
     session: Session = Depends(get_db_session),
+    _user: dict = Depends(get_current_user),
 ):
     """Return per-turn API usage breakdown for a specific call."""
     statement = (
