@@ -1,7 +1,38 @@
+# Secrets & credentials
 .env
+.env.*
+!.env.example
+credentials/
+*.key
+*.pem
+*.cert
+*.pfx
+*.p12
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
 .venv/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Logs
 logs/
-declio.db
+
+# Build artifacts
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
 frontend/.tanstack/tmp/
+frontend/node_modules/
